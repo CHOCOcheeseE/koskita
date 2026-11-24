@@ -1,0 +1,296 @@
+// Skema database KosKita (PostgreSQL lokal).
+// Pemilik: Fitri (Database). Penjelasan lengkap: docs/04-database.md
+// Acuan: contracts/openapi.yaml v1.1.0 dan docs/02-arsitektur.md.
+//
+// Aturan umum:
+// - Semua nominal uang = Int rupiah utuh.
+// - Semua timestamp = timestamptz (UTC). Tanggal transaksi = date (kalender WIB).
+// - Aturan yang tidak bisa ditulis di Prisma (CHECK constraint) ada di SQL migrasi
+//   prisma/migrations/20261124000000_init/migration.sql.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ------------------------------------------------------------------ enum
+
+enum TransactionType {
+  income
+  expense
+}
+
+/// Kode kategori transaksi, sama persis dengan skema `Category` di kontrak.
+enum CategoryCode {
+  food
+  transport
+  housing_bills
+  study
+  leisure
+  other_expense
+  allowance
+  side_job
+  scholarship
+  other_income
+}
+
+enum SplitMethod {
+  equal
+  manual
+}
+
+enum BillStatus {
+  open
+  settled
+}
+
+enum ShareStatus {
+  belum_bayar
+  menunggu_konfirmasi
+  lunas
+}
+
+enum TaskStatus {
+  belum
+  selesai
+}
+
+// ------------------------------------------------------------------ akun
+
+/// AKN-01..03. Email disimpan huruf kecil (CHECK di migrasi) supaya unik tanpa beda kapital.
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  email        String   @unique @db.VarChar(254)
+  passwordHash String   @map("password_hash") @db.VarChar(100)
+  name         String   @db.VarChar(50)
+  campus       String?  @db.VarChar(80)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  refreshTokens  RefreshToken[]
+  transactions   Transaction[]
+  budgets        Budget[]
+  memberships    GroupMember[]
+  billsPaid      Bill[]          @relation("BillPayer")
+  billsCreated   Bill[]          @relation("BillCreator")
+  billShares     BillShare[]
+  classSchedules ClassSchedule[]
+  studyTasks     StudyTask[]
+
+  @@map("users")
+}
+
+/// K4. Satu baris = satu refresh token (satu perangkat). Token asli tidak disimpan, hanya hash SHA-256.
+/// Rotasi: token lama diisi `usedAt`, token baru dibuat. Keluar: diisi `revokedAt`.
+model RefreshToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash") @db.Char(64)
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(3)
+  usedAt    DateTime? @map("used_at") @db.Timestamptz(3)
+  revokedAt DateTime? @map("revoked_at") @db.Timestamptz(3)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}
+
+// ------------------------------------------------------------------ dompet
+
+/// Tabel acuan kategori (diisi seed, tidak diubah pengguna di MVP).
+/// Tipe dan label disimpan sekali di sini, bukan diulang di tiap transaksi.
+model WalletCategory {
+  id        String          @id @default(uuid()) @db.Uuid
+  code      CategoryCode    @unique
+  type      TransactionType
+  label     String          @db.VarChar(30)
+  sortOrder Int             @map("sort_order") @db.SmallInt
+  createdAt DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime        @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  transactions Transaction[]
+
+  @@unique([type, sortOrder])
+  @@map("wallet_categories")
+}
+
+/// DPT-01, DPT-02. Tipe (income/expense) tidak disimpan di sini: diturunkan dari kategori.
+model Transaction {
+  id        String       @id @default(uuid()) @db.Uuid
+  userId    String       @map("user_id") @db.Uuid
+  category  CategoryCode
+  amount    Int
+  date      DateTime     @db.Date
+  note      String?      @db.VarChar(100)
+  createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  user         User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  categoryInfo WalletCategory @relation(fields: [category], references: [code], onDelete: Restrict)
+
+  // listTransactions: WHERE user_id AND date di bulan itu ORDER BY date DESC, created_at DESC, id DESC.
+  // Index yang sama dipakai getMonthSummary dan jatah harian (WHERE user_id AND date BETWEEN ...).
+  @@index([userId, date(sort: Desc), createdAt(sort: Desc), id(sort: Desc)])
+  @@index([category])
+  @@map("transactions")
+}
+
+/// DPT-03. Satu anggaran per user per bulan WIB.
+model Budget {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  /// Bulan WIB format YYYY-MM, sama dengan skema `Month` di kontrak.
+  month     String   @db.Char(7)
+  amount    Int
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, month])
+  @@map("budgets")
+}
+
+// ------------------------------------------------------------------ patungan
+
+/// PTG-01. Grup kos dengan kode undangan unik.
+model Group {
+  id         String   @id @default(uuid()) @db.Uuid
+  name       String   @db.VarChar(40)
+  inviteCode String   @unique @map("invite_code") @db.Char(6)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  members GroupMember[]
+  bills   Bill[]
+
+  @@map("groups")
+}
+
+/// Anggota aktif grup. Keluar grup = baris dihapus; gabung lagi = baris baru dengan `joinedAt` baru.
+/// Bagian tagihan lama tetap aman karena BillShare menunjuk ke User, bukan ke baris ini.
+model GroupMember {
+  id        String   @id @default(uuid()) @db.Uuid
+  groupId   String   @map("group_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  /// Urutan bagi rata (sisa Rp1 ke yang paling awal bergabung).
+  joinedAt  DateTime @default(now()) @map("joined_at") @db.Timestamptz(3)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, userId])
+  // getGroup, splitEqually: anggota satu grup urut joinedAt menaik.
+  @@index([groupId, joinedAt])
+  // listMyGroups: grup milik saya urut joinedAt menurun.
+  @@index([userId, joinedAt(sort: Desc)])
+  @@map("group_members")
+}
+
+/// PTG-02. `status` disimpan (bukan dihitung) karena dipakai filter + paginasi listGroupBills.
+/// Selalu diperbarui dalam satu transaksi Prisma bersama status bagian (K15).
+model Bill {
+  id          String      @id @default(uuid()) @db.Uuid
+  groupId     String      @map("group_id") @db.Uuid
+  title       String      @db.VarChar(60)
+  totalAmount Int         @map("total_amount")
+  splitMethod SplitMethod @map("split_method")
+  payerId     String      @map("payer_id") @db.Uuid
+  createdById String      @map("created_by_id") @db.Uuid
+  status      BillStatus  @default(open)
+  createdAt   DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime    @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  group     Group       @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  payer     User        @relation("BillPayer", fields: [payerId], references: [id], onDelete: Restrict)
+  createdBy User        @relation("BillCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  shares    BillShare[]
+
+  // listGroupBills tanpa filter: terbaru di atas.
+  @@index([groupId, createdAt(sort: Desc), id(sort: Desc)])
+  // listGroupBills?status=...
+  @@index([groupId, status, createdAt(sort: Desc), id(sort: Desc)])
+  @@index([payerId])
+  @@index([createdById])
+  @@map("bills")
+}
+
+/// PTG-02..04. Satu bagian per peserta per tagihan.
+/// Saldo grup dihitung dari bagian `belum_bayar` dan `menunggu_konfirmasi`, tidak disimpan terpisah.
+model BillShare {
+  id        String      @id @default(uuid()) @db.Uuid
+  billId    String      @map("bill_id") @db.Uuid
+  userId    String      @map("user_id") @db.Uuid
+  amount    Int
+  status    ShareStatus @default(belum_bayar)
+  createdAt DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime    @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  bill Bill @relation(fields: [billId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([billId, userId])
+  // Saldo: bagian yang belum lunas per tagihan; cek BILL_HAS_PAYMENTS dan status settled.
+  @@index([billId, status])
+  // leaveGroup / Beranda: bagian saya yang belum lunas.
+  @@index([userId, status])
+  @@map("bill_shares")
+}
+
+// ------------------------------------------------------------------ kuliah
+
+/// KLH-01. Jam disimpan sebagai menit sejak 00:00 WIB (08:00 = 480) supaya cek bentrok cukup bandingkan angka.
+/// Mapper mengubahnya ke/dari format `HH:mm` di kontrak.
+model ClassSchedule {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  courseName  String   @map("course_name") @db.VarChar(60)
+  /// Hari ISO, 1 = Senin sampai 7 = Minggu.
+  dayOfWeek   Int      @map("day_of_week") @db.SmallInt
+  startMinute Int      @map("start_minute") @db.SmallInt
+  endMinute   Int      @map("end_minute") @db.SmallInt
+  room        String?  @db.VarChar(30)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  user  User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tasks StudyTask[]
+
+  // listSchedules, Beranda classesToday, findConflicts: urut hari lalu jam mulai.
+  @@index([userId, dayOfWeek, startMinute])
+  @@map("class_schedules")
+}
+
+/// KLH-02. `completedAt` terisi hanya saat status `selesai` (CHECK di migrasi).
+model StudyTask {
+  id          String     @id @default(uuid()) @db.Uuid
+  userId      String     @map("user_id") @db.Uuid
+  scheduleId  String?    @map("schedule_id") @db.Uuid
+  title       String     @db.VarChar(80)
+  deadline    DateTime   @db.Timestamptz(3)
+  note        String?    @db.VarChar(300)
+  status      TaskStatus @default(belum)
+  completedAt DateTime?  @map("completed_at") @db.Timestamptz(3)
+  createdAt   DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  user     User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  schedule ClassSchedule? @relation(fields: [scheduleId], references: [id], onDelete: SetNull)
+
+  // listTasks?status=belum dan Beranda upcomingTasks: urut deadline menaik.
+  @@index([userId, status, deadline, id])
+  // listTasks?status=selesai: urut completedAt menurun.
+  @@index([userId, status, completedAt(sort: Desc), id(sort: Desc)])
+  @@index([scheduleId])
+  @@map("study_tasks")
+}
