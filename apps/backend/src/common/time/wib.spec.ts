@@ -1,6 +1,7 @@
 import {
   daysLeftInMonthWib,
   isCalendarDate,
+  isIsoDateTime,
   monthDateRange,
   monthWib,
   previousDate,
@@ -41,6 +42,15 @@ describe('wib', () => {
   it('rentang bulan dan tanggal sebelumnya', () => {
     expect(monthDateRange('2028-02')).toEqual({ first: '2028-02-01', last: '2028-02-29' });
     expect(previousDate('2026-12-01')).toBe('2026-11-30');
+  });
+
+  it('isIsoDateTime: tahun UTC wajib 1..9999 (BUG-05)', () => {
+    expect(isIsoDateTime('2026-11-24T03:00:00Z')).toBe(true);
+    expect(isIsoDateTime('9999-12-31T23:59:00Z')).toBe(true);
+    expect(isIsoDateTime('9999-12-31T23:59:00+01:00')).toBe(true);
+    expect(isIsoDateTime('9999-12-31T23:59:00-01:00')).toBe(false);
+    expect(isIsoDateTime('1000-01-01T00:30:00+01:00')).toBe(true);
+    expect(isIsoDateTime('-010000-01-01T00:00:00.000Z')).toBe(false);
   });
 
   it('validasi tanggal kalender', () => {

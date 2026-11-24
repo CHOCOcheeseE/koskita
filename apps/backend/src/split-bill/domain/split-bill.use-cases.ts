@@ -17,6 +17,7 @@ import {
   MAX_GROUP_MEMBERS,
   nextShareStatus,
   normalizeInviteCode,
+  RandomInt,
   ShareAction,
   ShareStatus,
   splitEqually,
@@ -69,14 +70,14 @@ export class SplitBillUseCases {
   constructor(
     private readonly groups: GroupRepository,
     private readonly bills: BillRepository,
-    private readonly random: () => number,
+    private readonly randomInt: RandomInt,
   ) {}
 
   // ------------------------------------------------------------ grup
 
   async createGroup(userId: string, name: string): Promise<GroupWithMembers> {
     for (let attempt = 0; attempt < 10; attempt++) {
-      const group = await this.groups.create({ name: name.trim(), inviteCode: createInviteCode(this.random), creatorId: userId });
+      const group = await this.groups.create({ name: name.trim(), inviteCode: createInviteCode(this.randomInt), creatorId: userId });
       if (group) return this.requireGroup(group.id);
     }
     throw new AppError(500, 'INTERNAL_ERROR', 'Gagal membuat kode undangan, coba lagi');

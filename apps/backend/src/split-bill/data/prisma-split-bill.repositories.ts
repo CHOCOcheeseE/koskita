@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { randomInt } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { isUniqueViolation, PrismaService } from '../../common/data/prisma.service';
 import {
@@ -203,4 +204,5 @@ export class PrismaBillRepository implements BillRepository {
   }
 }
 
-export const mathRandom = (): number => Math.random();
+/** Acak kriptografis untuk kode undangan (bukan Math.random yang bisa ditebak). */
+export const cryptoRandomInt = (max: number): number => randomInt(max);

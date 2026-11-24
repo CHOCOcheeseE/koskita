@@ -78,9 +78,17 @@ export function isCalendarDate(value: string): boolean {
 /** ISO 8601 tanggal+jam dengan tahun tepat 4 digit dan zona (Z atau ±HH:mm). */
 export const DATE_TIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})$/;
 
-/** Tanggal+jam ISO yang sah: pola DATE_TIME_RE, tanggal kalender nyata, dan bisa di-parse. */
+/**
+ * Tanggal+jam ISO yang sah: pola DATE_TIME_RE, tanggal kalender nyata, bisa di-parse, dan
+ * tahun UTC-nya 1..9999. Contoh `9999-12-31T23:59:00-01:00` jatuh ke tahun 10000 di UTC, sehingga
+ * toISOString() menghasilkan "+010000-..." yang bukan date-time 4 digit tahun (BUG-05).
+ */
 export function isIsoDateTime(value: string): boolean {
-  return DATE_TIME_RE.test(value) && isCalendarDate(value.slice(0, 10)) && !Number.isNaN(Date.parse(value));
+  if (!DATE_TIME_RE.test(value) || !isCalendarDate(value.slice(0, 10))) return false;
+  const ms = Date.parse(value);
+  if (Number.isNaN(ms)) return false;
+  const utcYear = new Date(ms).getUTCFullYear();
+  return utcYear >= 1 && utcYear <= 9999;
 }
 
 export function isMonth(value: string): boolean {

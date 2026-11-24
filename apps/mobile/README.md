@@ -21,14 +21,14 @@ Semua angka (jatah harian, bagi rata, saldo, label deadline, bentrok jadwal) dat
 ## Cek kode
 
 ```bash
-npx tsc --noEmit -p apps/mobile
+npm --prefix apps/mobile run typecheck
 npm --prefix apps/mobile run lint
 ```
 
 Tipe API dibuat dari kontrak (jangan diedit tangan):
 
 ```bash
-npx openapi-typescript contracts/openapi.yaml -o apps/mobile/src/data/api/schema.d.ts
+npm --prefix apps/mobile run gen:api
 ```
 
 ## Struktur

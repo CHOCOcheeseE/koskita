@@ -82,11 +82,20 @@ export function nextShareStatus(current: ShareStatus, action: ShareAction, actor
 
 const INVITE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
-/** Kode undangan 6 karakter tanpa O, 0, I, 1. `random` mengembalikan angka [0, 1). */
-export function createInviteCode(random: () => number): string {
+/** Bilangan bulat acak [0, max). Produksi memakai `crypto.randomInt` (CSPRNG). */
+export type RandomInt = (max: number) => number;
+
+export const INVITE_ALPHABET_SIZE = INVITE_ALPHABET.length;
+
+/** Kode undangan 6 karakter tanpa O, 0, I, 1 (32^6 ≈ 1 miliar kemungkinan). */
+export function createInviteCode(randomInt: RandomInt): string {
   let code = '';
   for (let i = 0; i < 6; i++) {
-    code += INVITE_ALPHABET[Math.floor(random() * INVITE_ALPHABET.length) % INVITE_ALPHABET.length];
+    const index = randomInt(INVITE_ALPHABET.length);
+    if (!Number.isInteger(index) || index < 0 || index >= INVITE_ALPHABET.length) {
+      throw new Error(`randomInt harus menghasilkan bilangan bulat 0..${INVITE_ALPHABET.length - 1}`);
+    }
+    code += INVITE_ALPHABET[index];
   }
   return code;
 }

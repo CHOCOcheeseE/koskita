@@ -89,9 +89,14 @@ describe('nextShareStatus', () => {
 
 describe('createInviteCode', () => {
   it('6 karakter dari alfabet tanpa O, 0, I, 1', () => {
-    let seed = 0.123;
-    const code = createInviteCode(() => (seed = (seed * 9301 + 0.49297) % 1));
-    expect(code).toMatch(/^[A-HJ-NP-Z2-9]{6}$/);
-    expect(createInviteCode(() => 0.999999)).toBe('999999');
+    let n = 0;
+    expect(createInviteCode(() => n++ % 32)).toBe('ABCDEF');
+    expect(createInviteCode((max) => max - 1)).toBe('999999');
+    expect(createInviteCode(() => 0)).toMatch(/^[A-HJ-NP-Z2-9]{6}$/);
+  });
+
+  it('menolak randomInt di luar rentang', () => {
+    expect(() => createInviteCode(() => 32)).toThrow();
+    expect(() => createInviteCode(() => 0.5)).toThrow();
   });
 });

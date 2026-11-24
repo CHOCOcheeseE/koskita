@@ -5,7 +5,7 @@ import { createTestApp, expectError, registerUser, Session, TestApp } from './su
  * Tes kasus tepi dari QA (Gilang).
  * `it.failing` = bug yang sudah dilaporkan di docs/qa; tes ini akan merah begitu bug diperbaiki,
  * lalu ganti `it.failing` menjadi `it`. BUG-01 dan BUG-02 sudah diperbaiki (review ulang ke-1),
- * BUG-04 di review ulang ke-2. BUG-05 masih terbuka.
+ * BUG-04 di review ulang ke-2, BUG-05 di review akhir.
  */
 const cursorOf = (v: string, i: string) => Buffer.from(JSON.stringify({ v, i }), 'utf8').toString('base64url');
 
@@ -329,7 +329,7 @@ describe('QA kasus tepi (e2e)', () => {
     // yang dibuat server sendiri dari baris itu ditolak parseCursorDate -> halaman berikutnya 400.
     const EDGE_DEADLINE = '9999-12-31T23:59:00-01:00';
 
-    it.failing('BUG-05: deadline di tepi tahun 9999 harus ditolak 400 atau tetap dibalas date-time 4 digit tahun', async () => {
+    it('BUG-05: deadline di tepi tahun 9999 harus ditolak 400 atau tetap dibalas date-time 4 digit tahun', async () => {
       const a = await registerUser(t);
       const res = await t.http.post('/v1/study/tasks').set(a.auth).send({ title: 'Tepi', deadline: EDGE_DEADLINE });
       if (res.status === 400) return;
@@ -337,7 +337,7 @@ describe('QA kasus tepi (e2e)', () => {
       expect(res.body.deadline).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     });
 
-    it.failing('BUG-05: nextCursor dari server tidak boleh ditolak server sendiri', async () => {
+    it('BUG-05: nextCursor dari server tidak boleh ditolak server sendiri', async () => {
       const a = await registerUser(t);
       for (const title of ['Tepi 1', 'Tepi 2']) {
         await t.http.post('/v1/study/tasks').set(a.auth).send({ title, deadline: EDGE_DEADLINE });

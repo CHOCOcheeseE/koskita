@@ -56,7 +56,9 @@ test/
 - **Waktu**: semua "hari ini" dan "bulan berjalan" dihitung di WIB lewat `Clock` yang di-inject, jadi tes bisa memakai tanggal tetap.
 - **Token**: access JWT HS256 15 menit (`TOKEN_EXPIRED` saat habis), refresh token buram 30 hari yang disimpan hash SHA-256-nya dan dirotasi sekali pakai.
 - **Kata sandi**: bcrypt cost 10 (`bcryptjs`, tanpa build native).
-- **Throttle**: `login` dan `register` dibatasi `AUTH_THROTTLE_LIMIT` per `AUTH_THROTTLE_TTL_MS` per IP, balas 429 `TOO_MANY_REQUESTS`.
+- **Throttle**: `login` dan `register` dibatasi `AUTH_THROTTLE_LIMIT` per `AUTH_THROTTLE_TTL_MS` per IP. `groups/join` punya batas sendiri, `JOIN_THROTTLE_LIMIT` per `JOIN_THROTTLE_TTL_MS` (default 10/menit), supaya kode undangan tidak bisa ditebak beruntun. Keduanya membalas 429 `TOO_MANY_REQUESTS`.
+- **Kode undangan** dibuat dengan `crypto.randomInt` (CSPRNG), bukan `Math.random`.
+- **Env**: backend menolak start kalau `JWT_ACCESS_SECRET` kurang dari 32 karakter atau masih nilai contoh dari `.env.example` (mengandung "ganti"). Buat nilai acak dengan `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`.
 
 ## Tes
 

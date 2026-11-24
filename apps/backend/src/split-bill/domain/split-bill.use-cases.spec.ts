@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomInt, randomUUID } from 'node:crypto';
 import { MemoryBillRepository, MemoryDb, MemoryGroupRepository } from '../../../test/support/in-memory';
 import { SplitBillUseCases } from './split-bill.use-cases';
 
@@ -9,8 +9,7 @@ function setup() {
     db.users.set(id, { id, email: `${id}@x.id`, name, campus: null, createdAt: new Date(), passwordHash: 'x' });
     return id;
   };
-  let seed = 0.1;
-  const uc = new SplitBillUseCases(new MemoryGroupRepository(db), new MemoryBillRepository(db), () => (seed = (seed * 7.13 + 0.31) % 1));
+  const uc = new SplitBillUseCases(new MemoryGroupRepository(db), new MemoryBillRepository(db), (max) => randomInt(max));
   return { db, user, uc };
 }
 
@@ -36,13 +35,12 @@ describe('SplitBillUseCases', () => {
     const { user, db } = setup();
     const a = user('Ana');
     const codes = ['AAAAAA', 'AAAAAA', 'BBBBBB'];
-    // random dibuat supaya createInviteCode menghasilkan kode berurutan di atas
+    // randomInt dibuat supaya createInviteCode menghasilkan kode berurutan di atas
     const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
     const chars = codes.join('').split('');
-    const uc = new SplitBillUseCases(new MemoryGroupRepository(db), new MemoryBillRepository(db), () => {
-      const ch = chars.shift() ?? 'C';
-      return (alphabet.indexOf(ch) + 0.5) / alphabet.length;
-    });
+    const uc = new SplitBillUseCases(new MemoryGroupRepository(db), new MemoryBillRepository(db), () =>
+      alphabet.indexOf(chars.shift() ?? 'C'),
+    );
     const g1 = await uc.createGroup(a, 'Grup Satu');
     const g2 = await uc.createGroup(a, 'Grup Dua');
     expect(g1.inviteCode).toBe('AAAAAA');

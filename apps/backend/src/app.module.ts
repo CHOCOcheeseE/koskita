@@ -28,10 +28,17 @@ import { WalletModule } from './wallet/wallet.module';
     }),
     ThrottlerModule.forRootAsync({
       inject: [ConfigService],
+      // Dua batas terpisah: `default` untuk login/register, `join` untuk gabung grup lewat kode undangan.
       useFactory: (config: ConfigService) => [
         {
+          name: 'default',
           ttl: Number(config.get('AUTH_THROTTLE_TTL_MS') ?? 60_000),
           limit: Number(config.get('AUTH_THROTTLE_LIMIT') ?? 10),
+        },
+        {
+          name: 'join',
+          ttl: Number(config.get('JOIN_THROTTLE_TTL_MS') ?? 60_000),
+          limit: Number(config.get('JOIN_THROTTLE_LIMIT') ?? 10),
         },
       ],
     }),

@@ -23,6 +23,8 @@ import {
   MemoryUserRepository,
 } from './in-memory';
 
+export { AuthUseCases } from '../../src/auth/domain/auth.use-cases';
+
 /** Selasa, 24 November 2026 10:00 WIB. */
 export const DEFAULT_NOW = new Date('2026-11-24T03:00:00Z');
 

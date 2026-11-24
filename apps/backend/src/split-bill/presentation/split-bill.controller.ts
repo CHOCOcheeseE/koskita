@@ -1,4 +1,5 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { SkipThrottle, ThrottlerGuard } from '@nestjs/throttler';
 import type { components } from '../../contract/schema';
 import { CurrentUser, UuidParamPipe } from '../../common/presentation/auth';
 import { DEFAULT_LIMIT } from '../../common/presentation/pagination.dto';
@@ -23,6 +24,9 @@ export class SplitBillController {
     return toGroupDetailResponse(await this.split.createGroup(userId, body.name));
   }
 
+  /** Dibatasi throttler `join` (JOIN_THROTTLE_LIMIT per JOIN_THROTTLE_TTL_MS per IP) supaya kode undangan tidak bisa ditebak beruntun. */
+  @UseGuards(ThrottlerGuard)
+  @SkipThrottle({ default: true })
   @Post('groups/join')
   @HttpCode(200)
   async joinGroup(@CurrentUser() userId: string, @Body() body: JoinGroupDto): Promise<Schemas['GroupDetail']> {

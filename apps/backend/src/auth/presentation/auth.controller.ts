@@ -1,5 +1,5 @@
 import { Body, Controller, HttpCode, Post, UseGuards } from '@nestjs/common';
-import { ThrottlerGuard } from '@nestjs/throttler';
+import { SkipThrottle, ThrottlerGuard } from '@nestjs/throttler';
 import type { components } from '../../contract/schema';
 import { CurrentUser, Public } from '../../common/presentation/auth';
 import { AuthUseCases } from '../domain/auth.use-cases';
@@ -14,6 +14,7 @@ export class AuthController {
 
   @Public()
   @UseGuards(ThrottlerGuard)
+  @SkipThrottle({ join: true })
   @Post('register')
   @HttpCode(201)
   async register(@Body() body: RegisterDto): Promise<Schemas['AuthSession']> {
@@ -22,6 +23,7 @@ export class AuthController {
 
   @Public()
   @UseGuards(ThrottlerGuard)
+  @SkipThrottle({ join: true })
   @Post('login')
   @HttpCode(200)
   async login(@Body() body: LoginDto): Promise<Schemas['AuthSession']> {
