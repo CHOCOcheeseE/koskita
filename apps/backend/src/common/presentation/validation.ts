@@ -2,7 +2,7 @@ import { ValidationError, ValidationPipe } from '@nestjs/common';
 import { Transform } from 'class-transformer';
 import { registerDecorator, ValidationArguments, ValidationOptions } from 'class-validator';
 import { validationFailed } from '../domain/app-error';
-import { isCalendarDate, isMonth } from '../time/wib';
+import { isCalendarDate, isIsoDateTime, isMonth } from '../time/wib';
 
 const MESSAGES: Record<string, (field: string, args: unknown[]) => string> = {
   whitelistValidation: (f) => `Field ${f} tidak dikenal`,
@@ -97,14 +97,26 @@ export const IsCalendarDate = (options?: ValidationOptions) =>
 export const IsMonth = (options?: ValidationOptions) =>
   custom('isMonth', (v) => typeof v === 'string' && isMonth(v), (f) => `${f} harus bulan format YYYY-MM`, options);
 
-const DATE_TIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})$/;
 export const IsDateTime = (options?: ValidationOptions) =>
   custom(
     'isDateTime',
-    (v) => typeof v === 'string' && DATE_TIME_RE.test(v) && !Number.isNaN(Date.parse(v)) && isCalendarDate(v.slice(0, 10)),
+    (v) => typeof v === 'string' && isIsoDateTime(v),
     (f) => `${f} harus tanggal dan jam ISO 8601, contoh 2026-11-24T03:00:00Z`,
     options,
   );
 
-export const TIME_RE = /^([01][0-9]|2[0-3]):[0-5][0-9]$/;
+/** Panjang dalam byte UTF-8 (bcrypt hanya memakai 72 byte pertama). */
+export const MaxUtf8Bytes = (max: number, options?: ValidationOptions) =>
+  custom(
+    'maxUtf8Bytes',
+    (v) => typeof v !== 'string' || utf8Length(v) <= max,
+    (f) => `${f} maksimal ${max} byte (huruf beraksen atau emoji dihitung lebih dari 1)`,
+    options,
+  );
+
+export function utf8Length(value: string): number {
+  return new TextEncoder().encode(value).length;
+}
+
+export const TIME_RE =/^([01][0-9]|2[0-3]):[0-5][0-9]$/;
 export const isPresent = (field: string) => (o: Record<string, unknown>) => o[field] !== undefined;

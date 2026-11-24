@@ -180,7 +180,8 @@ describe('kepatuhan kontrak OpenAPI (e2e)', () => {
     await call('delete', '/v1/wallet/transactions/{transactionId}', 204, { token: A, params: { transactionId: tx.id } });
 
     expect([...contract.covered].sort()).toEqual(contract.allOperations());
-  });
+    // Satu tes berisi ±80 request; beri waktu lebih supaya tidak timeout saat semua suite jalan paralel.
+  }, 120_000);
 
   it('validator benar-benar menolak field di luar kontrak', () => {
     expect(() => contract.check('get', '/v1/health', 200, { status: 'ok', extra: 1 })).toThrow(/tidak cocok kontrak/);

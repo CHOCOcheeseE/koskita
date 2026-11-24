@@ -1,5 +1,5 @@
 import { AppError, notFound, notGroupMember, validationFailed } from '../../common/domain/app-error';
-import { decodeCursor, Page, toPage } from '../../common/pagination/cursor';
+import { decodeCursor, Page, parseCursorDate, toPage } from '../../common/pagination/cursor';
 import { formatRupiah } from '../../common/domain/rupiah';
 import {
   Bill,
@@ -162,14 +162,7 @@ export class SplitBillUseCases {
   ): Promise<Page<BillView>> {
     const group = await this.assertMember(groupId, userId);
     const decoded = decodeCursor(cursor);
-    let after = null;
-    if (decoded) {
-      const createdAt = new Date(decoded.v);
-      if (Number.isNaN(createdAt.getTime())) {
-        throw new AppError(400, 'VALIDATION_FAILED', 'Kursor halaman tidak valid', { cursor: 'Kursor halaman tidak valid' });
-      }
-      after = { createdAt, id: decoded.i };
-    }
+    const after = decoded ? { createdAt: parseCursorDate(decoded.v), id: decoded.i } : null;
     const rows = await this.bills.listByGroup(groupId, status, after, limit + 1);
     const page = toPage(rows, limit, (b) => ({ v: b.createdAt.toISOString(), i: b.id }));
     return { items: page.items.map((b) => this.view(b, group, userId)), nextCursor: page.nextCursor };

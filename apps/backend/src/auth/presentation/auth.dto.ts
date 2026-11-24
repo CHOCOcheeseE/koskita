@@ -1,5 +1,5 @@
 import { IsDefined, IsEmail, IsString, MaxLength, MinLength } from 'class-validator';
-import { Trim } from '../../common/presentation/validation';
+import { MaxUtf8Bytes, Trim } from '../../common/presentation/validation';
 
 export class RegisterDto {
   @IsDefined()
@@ -13,6 +13,7 @@ export class RegisterDto {
   @IsString()
   @MinLength(8)
   @MaxLength(72)
+  @MaxUtf8Bytes(72)
   password: string;
 
   @IsDefined()

@@ -75,6 +75,14 @@ export function isCalendarDate(value: string): boolean {
   return date.getUTCFullYear() === y && date.getUTCMonth() === m - 1 && date.getUTCDate() === d;
 }
 
+/** ISO 8601 tanggal+jam dengan tahun tepat 4 digit dan zona (Z atau ±HH:mm). */
+export const DATE_TIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2})$/;
+
+/** Tanggal+jam ISO yang sah: pola DATE_TIME_RE, tanggal kalender nyata, dan bisa di-parse. */
+export function isIsoDateTime(value: string): boolean {
+  return DATE_TIME_RE.test(value) && isCalendarDate(value.slice(0, 10)) && !Number.isNaN(Date.parse(value));
+}
+
 export function isMonth(value: string): boolean {
   return MONTH_RE.test(value);
 }

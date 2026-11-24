@@ -1,7 +1,7 @@
 import { AppError, notFound } from '../../common/domain/app-error';
 import { Clock } from '../../common/domain/clock';
-import { decodeCursor, Page, toPage } from '../../common/pagination/cursor';
-import { daysLeftInMonthWib, monthDateRange, monthWib, previousDate, todayWib } from '../../common/time/wib';
+import { decodeCursor, invalidCursor, Page, parseCursorDate, toPage } from '../../common/pagination/cursor';
+import { daysLeftInMonthWib, isCalendarDate, monthDateRange, monthWib, previousDate, todayWib } from '../../common/time/wib';
 import { CATEGORIES, Category, categoryInfo, CategoryInfo, TransactionType } from './categories';
 import { MonthTotals, summarizeMonth } from './category-summary';
 import { budgetRemaining, calculateDailyAllowance } from './daily-allowance';
@@ -162,10 +162,8 @@ export class WalletUseCases {
 }
 
 function parseTransactionCursor(v: string, id: string): TransactionCursor {
-  const [date, createdAt] = v.split('|');
-  const created = new Date(createdAt ?? '');
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date ?? '') || Number.isNaN(created.getTime())) {
-    throw new AppError(400, 'VALIDATION_FAILED', 'Kursor halaman tidak valid', { cursor: 'Kursor halaman tidak valid' });
-  }
-  return { date, createdAt: created, id };
+  const parts = v.split('|');
+  const [date, createdAt] = parts;
+  if (parts.length !== 2 || !isCalendarDate(date)) throw invalidCursor();
+  return { date, createdAt: parseCursorDate(createdAt), id };
 }

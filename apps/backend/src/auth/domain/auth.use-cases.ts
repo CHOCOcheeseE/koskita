@@ -1,4 +1,4 @@
-import { AppError } from '../../common/domain/app-error';
+import { AppError, validationFailed } from '../../common/domain/app-error';
 import { Clock } from '../../common/domain/clock';
 import {
   AccessTokenSigner,
@@ -22,6 +22,7 @@ export interface AuthSession {
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+export const MAX_PASSWORD_BYTES = 72;
 
 export class AuthUseCases {
   // Hash tiruan agar waktu respons login sama walau email tidak terdaftar.
@@ -40,6 +41,9 @@ export class AuthUseCases {
   async register(input: { email: string; password: string; name: string }): Promise<AuthSession> {
     const email = input.email.trim().toLowerCase();
     const emailTaken = new AppError(409, 'EMAIL_TAKEN', 'Email sudah terdaftar, silakan masuk');
+    if (new TextEncoder().encode(input.password).length > MAX_PASSWORD_BYTES) {
+      throw validationFailed({ password: `password maksimal ${MAX_PASSWORD_BYTES} byte` });
+    }
     if (await this.users.findByEmail(email)) throw emailTaken;
 
     const passwordHash = await this.hasher.hash(input.password);
@@ -51,7 +55,9 @@ export class AuthUseCases {
   async login(input: { email: string; password: string }): Promise<AuthSession> {
     const found = await this.users.findByEmail(input.email.trim().toLowerCase());
     this.dummyHash ??= this.hasher.hash('akun-tidak-ada');
-    const ok = await this.hasher.compare(input.password, found?.passwordHash ?? (await this.dummyHash));
+    const matches = await this.hasher.compare(input.password, found?.passwordHash ?? (await this.dummyHash));
+    // bcrypt hanya membaca 72 byte pertama; sandi yang lebih panjang tidak pernah terdaftar, jadi pasti salah.
+    const ok = matches && new TextEncoder().encode(input.password).length <= MAX_PASSWORD_BYTES;
     if (!found || !ok) {
       throw new AppError(401, 'INVALID_CREDENTIALS', 'Email atau kata sandi salah');
     }

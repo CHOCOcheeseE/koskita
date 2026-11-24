@@ -1,0 +1,16 @@
+{
+  "rootDir": "..",
+  "testEnvironment": "node",
+  "testMatch": ["<rootDir>/test/**/*.test.ts"],
+  "moduleFileExtensions": ["ts", "js", "json"],
+  "moduleNameMapper": { "^@/(.*)$": "<rootDir>/src/$1" },
+  "transform": {
+    "^.+\\.ts$": [
+      "<rootDir>/../backend/node_modules/ts-jest",
+      {
+        "diagnostics": false,
+        "tsconfig": { "module": "commonjs", "target": "es2022", "esModuleInterop": true, "isolatedModules": true }
+      }
+    ]
+  }
+}

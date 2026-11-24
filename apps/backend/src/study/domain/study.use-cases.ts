@@ -1,6 +1,6 @@
 import { AppError, notFound } from '../../common/domain/app-error';
 import { Clock } from '../../common/domain/clock';
-import { decodeCursor, Page, toPage } from '../../common/pagination/cursor';
+import { decodeCursor, Page, parseCursorDate, toPage } from '../../common/pagination/cursor';
 import { wibDayOfWeek } from '../../common/time/wib';
 import { ClassSchedule, ScheduleData, ScheduleRepository, StudyTask, TaskCursor, TaskRepository } from './ports';
 import {
@@ -92,14 +92,7 @@ export class StudyUseCases {
 
   async listTasks(userId: string, status: TaskStatus, cursor: string | undefined, limit: number): Promise<Page<TaskView>> {
     const decoded = decodeCursor(cursor);
-    let after: TaskCursor | null = null;
-    if (decoded) {
-      const value = new Date(decoded.v);
-      if (Number.isNaN(value.getTime())) {
-        throw new AppError(400, 'VALIDATION_FAILED', 'Kursor halaman tidak valid', { cursor: 'Kursor halaman tidak valid' });
-      }
-      after = { value, id: decoded.i };
-    }
+    const after: TaskCursor | null = decoded ? { value: parseCursorDate(decoded.v), id: decoded.i } : null;
     const rows = await this.tasks.list(userId, status, after, limit + 1);
     const page = toPage(rows, limit, (t) => ({
       v: (status === 'belum' ? t.deadline : (t.completedAt ?? t.deadline)).toISOString(),
