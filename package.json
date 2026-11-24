@@ -1,0 +1,29 @@
+{
+  "name": "koskita",
+  "version": "0.1.0",
+  "description": "KosKita: super app kecil untuk mahasiswa anak kos (Dompet, Patungan, Kuliah)",
+  "private": true,
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=20.19"
+  },
+  "scripts": {
+    "setup": "npm --prefix apps/backend install && npm --prefix apps/mobile install",
+    "setup:env": "node scripts/setup-env.mjs",
+    "doctor": "node scripts/doctor.mjs",
+    "secret": "node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\"",
+    "db:migrate": "npm --prefix apps/backend run prisma:migrate",
+    "db:status": "node scripts/prisma.mjs migrate status",
+    "dev": "node scripts/dev.mjs",
+    "dev:backend": "npm --prefix apps/backend run start:dev",
+    "dev:mobile": "npm --prefix apps/mobile run start",
+    "start:backend": "npm --prefix apps/backend run start",
+    "build": "npm --prefix apps/backend run build && npm --prefix apps/mobile run typecheck",
+    "test": "npm run test:backend && npm run test:mobile",
+    "test:backend": "npm --prefix apps/backend test",
+    "test:mobile": "node apps/backend/node_modules/jest/bin/jest.js --config apps/mobile/test/jest.config.json",
+    "lint": "npm --prefix apps/backend run typecheck && npm --prefix apps/mobile run typecheck && npm --prefix apps/mobile run lint",
+    "audit:backend": "npm --prefix apps/backend audit --omit=dev",
+    "audit:mobile": "npm --prefix apps/mobile audit --omit=dev"
+  }
+}

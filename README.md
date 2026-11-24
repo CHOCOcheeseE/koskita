@@ -14,4 +14,14 @@ Monorepo untuk aplikasi super app: aplikasi mobile, backend API, dan database.
 
 ## Menjalankan
 
-Panduan lengkapnya ada di `docs/cara-menjalankan.md` (dibuat setelah tahap build).
+Panduan lengkapnya ada di `docs/cara-menjalankan.md`. Ringkasnya, dari root repo:
+
+```powershell
+npm run setup        # dependensi backend + mobile
+npm run setup:env    # buat file .env
+npm run db:migrate   # butuh PostgreSQL lokal
+npm run dev:backend  # API di http://localhost:3000/v1
+npm run dev:mobile   # buka dengan Expo Go di HP
+```
+
+Cek kode: `npm run build`, `npm test`, `npm run lint`.

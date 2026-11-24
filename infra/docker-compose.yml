@@ -1,0 +1,45 @@
+# PostgreSQL + backend KosKita dalam container. Opsional, untuk nanti:
+# jalan lokal TIDAK butuh Docker (lihat docs/cara-menjalankan.md).
+#
+#   copy .env.example .env          (isi JWT_ACCESS_SECRET)
+#   docker compose --env-file .env -f infra/docker-compose.yml up --build
+#
+# Backend menjalankan `prisma migrate deploy` setiap start, lalu membuka port BACKEND_PORT.
+
+name: koskita
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-koskita}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-koskita}
+      POSTGRES_DB: ${POSTGRES_DB:-koskita}
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build:
+      context: ../apps/backend
+      dockerfile: ../../infra/backend.Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-koskita}:${POSTGRES_PASSWORD:-koskita}@db:5432/${POSTGRES_DB:-koskita}?schema=public
+      PORT: 3000
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?isi JWT_ACCESS_SECRET di .env (npm run secret)}
+    ports:
+      - "${BACKEND_PORT:-3000}:3000"
+
+volumes:
+  db-data:
