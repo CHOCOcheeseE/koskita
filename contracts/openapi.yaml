@@ -1,0 +1,1873 @@
+openapi: 3.1.0
+info:
+  title: KosKita API
+  version: 1.0.0
+  description: |
+    Kontrak API KosKita, satu-satunya acuan untuk apps/mobile dan apps/backend.
+
+    Aturan umum:
+    - Semua path diawali `/v1`.
+    - ID berupa UUID string.
+    - Nominal uang berupa integer rupiah (tanpa desimal).
+    - Timestamp (`date-time`) ISO 8601 UTC, contoh `2026-11-24T03:00:00Z`.
+    - Tanggal tanpa jam (`date`, contoh `2026-11-24`) dan bulan (`YYYY-MM`) dihitung di zona Asia/Jakarta (WIB).
+    - Jam kuliah berformat `HH:mm` (WIB).
+    - Daftar panjang memakai paginasi kursor: `?cursor=&limit=` dan balasan `{ items, nextCursor }`.
+      `nextCursor` bernilai `null` jika tidak ada halaman berikutnya.
+    - Semua error memakai bentuk `{ "error": { "code": "...", "message": "..." } }`.
+      `message` berbahasa Indonesia dan boleh langsung ditampilkan ke pengguna.
+    - 400 = bentuk/isi request tidak valid (validasi field). 422 = request valid tapi melanggar aturan bisnis.
+servers:
+  - url: http://localhost:3000
+    description: Backend lokal
+tags:
+  - name: health
+    description: Cek backend hidup.
+  - name: auth
+    description: AKN-01, AKN-02. Daftar, masuk, perbarui token, keluar.
+  - name: profile
+    description: AKN-03. Profil pengguna yang sedang masuk.
+  - name: home
+    description: BRD-01. Ringkasan hari ini.
+  - name: wallet
+    description: DPT-01 s.d. DPT-04. Transaksi, anggaran, jatah harian, ringkasan kategori.
+  - name: split-bill
+    description: PTG-01 s.d. PTG-04. Grup kos, tagihan bersama, status bayar, saldo.
+  - name: study
+    description: KLH-01, KLH-02. Jadwal kuliah dan tugas.
+
+security:
+  - bearerAuth: []
+
+paths:
+  # ---------------------------------------------------------------- health
+  /v1/health:
+    get:
+      tags: [health]
+      operationId: getHealth
+      summary: Cek backend dan koneksi database
+      security: []
+      responses:
+        '200':
+          description: Backend hidup
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    enum: [ok]
+
+  # ---------------------------------------------------------------- auth
+  /v1/auth/register:
+    post:
+      tags: [auth]
+      operationId: register
+      summary: Daftar akun baru lalu langsung masuk (AKN-01)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: Akun dibuat
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthSession'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: 'Email sudah dipakai (`EMAIL_TAKEN`)'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /v1/auth/login:
+    post:
+      tags: [auth]
+      operationId: login
+      summary: Masuk dengan email dan kata sandi (AKN-02)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Berhasil masuk
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthSession'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          description: 'Email atau kata sandi salah (`INVALID_CREDENTIALS`). Pesan tidak menyebut mana yang salah.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /v1/auth/refresh:
+    post:
+      tags: [auth]
+      operationId: refreshTokens
+      summary: Tukar refresh token dengan pasangan token baru (rotasi)
+      description: Refresh token lama langsung tidak berlaku setelah dipakai.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+      responses:
+        '200':
+          description: Token baru
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthTokens'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          description: 'Refresh token tidak valid, sudah dipakai, atau kedaluwarsa (`SESSION_EXPIRED`). Mobile mengarahkan ke layar Masuk dengan pesan "Sesi berakhir, silakan masuk lagi".'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/auth/logout:
+    post:
+      tags: [auth]
+      operationId: logout
+      summary: Keluar dan cabut refresh token di perangkat ini (AKN-02)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+      responses:
+        '204':
+          description: Sesi dicabut. Selalu 204 walau refresh token sudah tidak berlaku.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ---------------------------------------------------------------- profile
+  /v1/me:
+    get:
+      tags: [profile]
+      operationId: getMyProfile
+      summary: Lihat profil sendiri (AKN-03)
+      responses:
+        '200':
+          description: Profil
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    patch:
+      tags: [profile]
+      operationId: updateMyProfile
+      summary: Ubah nama dan/atau kampus (AKN-03). Email tidak bisa diubah.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProfileRequest'
+      responses:
+        '200':
+          description: Profil terbaru
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ---------------------------------------------------------------- home
+  /v1/home/today:
+    get:
+      tags: [home]
+      operationId: getHomeToday
+      summary: Ringkasan Beranda hari ini (BRD-01)
+      responses:
+        '200':
+          description: Ringkasan
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HomeSummary'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # ---------------------------------------------------------------- wallet
+  /v1/wallet/categories:
+    get:
+      tags: [wallet]
+      operationId: listWalletCategories
+      summary: Daftar kategori bawaan beserta label tampilan (DPT-01)
+      responses:
+        '200':
+          description: Kategori
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CategoryInfo'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /v1/wallet/transactions:
+    get:
+      tags: [wallet]
+      operationId: listTransactions
+      summary: Daftar transaksi satu bulan, terbaru di atas (DPT-02)
+      description: Urutan `date` menurun, lalu `createdAt` menurun. Total bulan diambil dari `getMonthSummary`.
+      parameters:
+        - $ref: '#/components/parameters/MonthQuery'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Satu halaman transaksi
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransactionPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          description: 'Bulan setelah bulan berjalan (`MONTH_IN_FUTURE`)'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    post:
+      tags: [wallet]
+      operationId: createTransaction
+      summary: Catat pemasukan atau pengeluaran (DPT-01)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransactionInput'
+      responses:
+        '201':
+          description: Transaksi tersimpan
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Transaction'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          description: 'Tanggal setelah hari ini (`DATE_IN_FUTURE`) atau kategori tidak cocok dengan tipe (`CATEGORY_TYPE_MISMATCH`)'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/wallet/transactions/{transactionId}:
+    parameters:
+      - name: transactionId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags: [wallet]
+      operationId: getTransaction
+      summary: Detail satu transaksi milik sendiri
+      responses:
+        '200':
+          description: Transaksi
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Transaction'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [wallet]
+      operationId: updateTransaction
+      summary: Ubah transaksi (DPT-02). Validasi sama dengan createTransaction.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransactionPatch'
+      responses:
+        '200':
+          description: Transaksi terbaru
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Transaction'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: '`DATE_IN_FUTURE` atau `CATEGORY_TYPE_MISMATCH`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      tags: [wallet]
+      operationId: deleteTransaction
+      summary: Hapus transaksi (DPT-02)
+      responses:
+        '204':
+          description: Terhapus
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/wallet/months/{month}/summary:
+    parameters:
+      - $ref: '#/components/parameters/MonthPath'
+    get:
+      tags: [wallet]
+      operationId: getMonthSummary
+      summary: Total bulan dan ringkasan pengeluaran per kategori (DPT-02, DPT-04)
+      responses:
+        '200':
+          description: Ringkasan bulan
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MonthSummary'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          description: '`MONTH_IN_FUTURE`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/wallet/budgets/{month}:
+    parameters:
+      - $ref: '#/components/parameters/MonthPath'
+    get:
+      tags: [wallet]
+      operationId: getBudgetStatus
+      summary: Anggaran bulan, sisa, dan jatah harian (DPT-03)
+      description: Jatah harian (`today`) hanya diisi untuk bulan berjalan; bulan lain bernilai `null`.
+      responses:
+        '200':
+          description: Status anggaran
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BudgetStatus'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: 'Belum ada anggaran untuk bulan itu (`BUDGET_NOT_FOUND`). Mobile menampilkan ajakan "Atur anggaran bulan ini".'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    put:
+      tags: [wallet]
+      operationId: setBudget
+      summary: Tetapkan atau ubah anggaran bulan berjalan (DPT-03)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BudgetInput'
+      responses:
+        '200':
+          description: Status anggaran setelah disimpan
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BudgetStatus'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          description: 'Hanya bulan berjalan yang bisa diatur (`MONTH_NOT_EDITABLE`)'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  # ---------------------------------------------------------------- split-bill
+  /v1/groups:
+    get:
+      tags: [split-bill]
+      operationId: listMyGroups
+      summary: Daftar grup yang saya ikuti
+      description: Tanpa paginasi karena jumlah grup per pengguna kecil. Urut `joinedAt` menurun.
+      responses:
+        '200':
+          description: Grup
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/GroupSummary'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [split-bill]
+      operationId: createGroup
+      summary: Buat grup kos; pembuat jadi anggota pertama (PTG-01)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateGroupRequest'
+      responses:
+        '201':
+          description: Grup dibuat beserta kode undangan
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GroupDetail'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /v1/groups/join:
+    post:
+      tags: [split-bill]
+      operationId: joinGroup
+      summary: Gabung grup lewat kode undangan (PTG-01)
+      description: Idempoten. Jika sudah anggota, balas 200 dengan grup yang sama tanpa membuat anggota ganda.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JoinGroupRequest'
+      responses:
+        '200':
+          description: Sekarang anggota grup
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GroupDetail'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: 'Kode grup tidak ditemukan (`GROUP_NOT_FOUND`)'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: 'Grup sudah 20 anggota (`GROUP_FULL`)'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/groups/{groupId}:
+    parameters:
+      - $ref: '#/components/parameters/GroupId'
+    get:
+      tags: [split-bill]
+      operationId: getGroup
+      summary: Detail grup dan anggota. Hanya anggota.
+      responses:
+        '200':
+          description: Grup
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GroupDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/NotGroupMember'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/groups/{groupId}/leave:
+    parameters:
+      - $ref: '#/components/parameters/GroupId'
+    post:
+      tags: [split-bill]
+      operationId: leaveGroup
+      summary: Keluar grup, hanya jika saldo saya di grup ini Rp0 (PTG-01)
+      responses:
+        '204':
+          description: Sudah keluar
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/NotGroupMember'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: 'Masih ada utang/piutang di grup ini (`BALANCE_NOT_SETTLED`, pesan "Selesaikan dulu patunganmu")'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/groups/{groupId}/balances:
+    parameters:
+      - $ref: '#/components/parameters/GroupId'
+    get:
+      tags: [split-bill]
+      operationId: getGroupBalances
+      summary: Saldo netto per pasangan anggota (PTG-04)
+      responses:
+        '200':
+          description: Saldo grup
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GroupBalances'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/NotGroupMember'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/groups/{groupId}/bills:
+    parameters:
+      - $ref: '#/components/parameters/GroupId'
+    get:
+      tags: [split-bill]
+      operationId: listGroupBills
+      summary: Daftar tagihan grup, terbaru di atas
+      parameters:
+        - name: status
+          in: query
+          required: false
+          description: Saring status tagihan. Tanpa parameter = semua.
+          schema:
+            $ref: '#/components/schemas/BillStatus'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Satu halaman tagihan
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BillPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/NotGroupMember'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags: [split-bill]
+      operationId: createBill
+      summary: Buat tagihan bersama, bagi rata atau manual (PTG-02)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateBillRequest'
+      responses:
+        '201':
+          description: Tagihan dibuat. Bagian milik pembayar otomatis `lunas`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Bill'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/NotGroupMember'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: |
+            Aturan bisnis dilanggar:
+            - `MIN_PARTICIPANTS`: peserta kurang dari 2.
+            - `PARTICIPANT_NOT_MEMBER`: pembayar atau peserta bukan anggota grup.
+            - `SHARES_SUM_MISMATCH`: jumlah bagian manual tidak sama dengan total; pesan menyebut selisihnya.
+            - `SHARES_NOT_ALLOWED` / `SHARES_REQUIRED`: `shares` diisi pada bagi rata, atau kosong pada bagi manual.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/bills/{billId}:
+    parameters:
+      - $ref: '#/components/parameters/BillId'
+    get:
+      tags: [split-bill]
+      operationId: getBill
+      summary: Detail tagihan dan status tiap bagian (PTG-03)
+      responses:
+        '200':
+          description: Tagihan
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Bill'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/NotGroupMember'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [split-bill]
+      operationId: deleteBill
+      summary: Hapus tagihan. Hanya pembuat, dan hanya jika belum ada bagian orang lain yang lunas (PTG-02)
+      responses:
+        '204':
+          description: Terhapus
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: 'Bukan anggota grup (`NOT_GROUP_MEMBER`) atau bukan pembuat tagihan (`NOT_BILL_CREATOR`)'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: 'Sudah ada bagian peserta lain yang lunas (`BILL_HAS_PAYMENTS`)'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/bills/{billId}/shares/{shareId}/mark-paid:
+    parameters:
+      - $ref: '#/components/parameters/BillId'
+      - $ref: '#/components/parameters/ShareId'
+    post:
+      tags: [split-bill]
+      operationId: markSharePaid
+      summary: Peserta menandai bagiannya sudah ditransfer (PTG-03)
+      description: 'Hanya pemilik bagian. Transisi `belum_bayar` ke `menunggu_konfirmasi`. Pembayar yang ingin langsung melunasi memakai `confirmShare`.'
+      responses:
+        '200':
+          description: Tagihan terbaru
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Bill'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: 'Bukan pemilik bagian (`NOT_SHARE_OWNER`) atau bukan anggota grup (`NOT_GROUP_MEMBER`)'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/InvalidShareTransition'
+
+  /v1/bills/{billId}/shares/{shareId}/confirm:
+    parameters:
+      - $ref: '#/components/parameters/BillId'
+      - $ref: '#/components/parameters/ShareId'
+    post:
+      tags: [split-bill]
+      operationId: confirmShare
+      summary: Pembayar mengonfirmasi bagian lunas (PTG-03)
+      description: 'Hanya pembayar tagihan. Transisi `menunggu_konfirmasi` atau `belum_bayar` (misal dibayar tunai) ke `lunas`. Tagihan jadi `settled` saat semua bagian lunas.'
+      responses:
+        '200':
+          description: Tagihan terbaru
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Bill'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/NotBillPayer'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/InvalidShareTransition'
+
+  /v1/bills/{billId}/shares/{shareId}/reject:
+    parameters:
+      - $ref: '#/components/parameters/BillId'
+      - $ref: '#/components/parameters/ShareId'
+    post:
+      tags: [split-bill]
+      operationId: rejectShare
+      summary: Pembayar menolak konfirmasi; status kembali ke belum_bayar (PTG-03)
+      description: 'Hanya pembayar tagihan. Transisi `menunggu_konfirmasi` ke `belum_bayar`.'
+      responses:
+        '200':
+          description: Tagihan terbaru
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Bill'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/NotBillPayer'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/InvalidShareTransition'
+
+  # ---------------------------------------------------------------- study
+  /v1/study/schedules:
+    get:
+      tags: [study]
+      operationId: listSchedules
+      summary: Jadwal kuliah mingguan, urut hari lalu jam mulai (KLH-01)
+      description: Tanpa paginasi karena jadwal mingguan jumlahnya kecil.
+      parameters:
+        - name: dayOfWeek
+          in: query
+          required: false
+          description: Saring satu hari. Tanpa parameter = seminggu penuh.
+          schema:
+            $ref: '#/components/schemas/DayOfWeek'
+      responses:
+        '200':
+          description: Jadwal
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ClassSchedule'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [study]
+      operationId: createSchedule
+      summary: Tambah jadwal kuliah (KLH-01)
+      description: Jadwal bentrok tetap disimpan; daftar bentrok ada di `conflictsWith`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScheduleInput'
+      responses:
+        '201':
+          description: Jadwal tersimpan
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClassSchedule'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/TimeRangeInvalid'
+
+  /v1/study/schedules/{scheduleId}:
+    parameters:
+      - name: scheduleId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags: [study]
+      operationId: getSchedule
+      summary: Detail satu jadwal
+      responses:
+        '200':
+          description: Jadwal
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClassSchedule'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [study]
+      operationId: updateSchedule
+      summary: Ubah jadwal (KLH-01)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SchedulePatch'
+      responses:
+        '200':
+          description: Jadwal terbaru
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClassSchedule'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/TimeRangeInvalid'
+    delete:
+      tags: [study]
+      operationId: deleteSchedule
+      summary: Hapus jadwal. Tugas yang menautnya jadi tanpa mata kuliah (`scheduleId` null).
+      responses:
+        '204':
+          description: Terhapus
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /v1/study/tasks:
+    get:
+      tags: [study]
+      operationId: listTasks
+      summary: Daftar tugas (KLH-02)
+      description: '`status=belum` (bawaan) urut `deadline` menaik. `status=selesai` urut `completedAt` menurun.'
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/TaskStatus'
+            default: belum
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Satu halaman tugas
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [study]
+      operationId: createTask
+      summary: Tambah tugas. Deadline lampau boleh (KLH-02).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaskInput'
+      responses:
+        '201':
+          description: Tugas tersimpan
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StudyTask'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ScheduleNotFound'
+
+  /v1/study/tasks/{taskId}:
+    parameters:
+      - name: taskId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags: [study]
+      operationId: getTask
+      summary: Detail satu tugas
+      responses:
+        '200':
+          description: Tugas
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StudyTask'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [study]
+      operationId: updateTask
+      summary: Ubah tugas, termasuk centang selesai lewat `status` (KLH-02)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaskPatch'
+      responses:
+        '200':
+          description: Tugas terbaru
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StudyTask'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ScheduleNotFound'
+    delete:
+      tags: [study]
+      operationId: deleteTask
+      summary: Hapus tugas
+      responses:
+        '204':
+          description: Terhapus
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Access token JWT, berlaku 15 menit. Perbarui lewat `refreshTokens`.
+
+  parameters:
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: Kursor buram dari `nextCursor` halaman sebelumnya. Kosong = halaman pertama.
+      schema:
+        type: string
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    MonthQuery:
+      name: month
+      in: query
+      required: true
+      description: Bulan WIB, format YYYY-MM.
+      schema:
+        $ref: '#/components/schemas/Month'
+    MonthPath:
+      name: month
+      in: path
+      required: true
+      description: Bulan WIB, format YYYY-MM.
+      schema:
+        $ref: '#/components/schemas/Month'
+    GroupId:
+      name: groupId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    BillId:
+      name: billId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ShareId:
+      name: shareId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  responses:
+    BadRequest:
+      description: 'Request tidak valid (`VALIDATION_FAILED`). `details` berisi pesan per field.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthorized:
+      description: 'Token tidak ada atau tidak valid (`UNAUTHENTICATED`), atau access token kedaluwarsa (`TOKEN_EXPIRED`, mobile memanggil `refreshTokens` lalu mengulang request sekali).'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: 'Data tidak ada atau bukan milik pengguna (`NOT_FOUND`). Data milik orang lain selalu 404, bukan 403, supaya keberadaannya tidak bocor.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotGroupMember:
+      description: 'Bukan anggota grup (`NOT_GROUP_MEMBER`)'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotBillPayer:
+      description: 'Bukan pembayar tagihan (`NOT_BILL_PAYER`) atau bukan anggota grup (`NOT_GROUP_MEMBER`)'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    InvalidShareTransition:
+      description: 'Status bagian saat ini tidak mengizinkan aksi ini (`INVALID_SHARE_TRANSITION`)'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    TimeRangeInvalid:
+      description: 'Jam selesai tidak setelah jam mulai (`TIME_RANGE_INVALID`)'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ScheduleNotFound:
+      description: '`scheduleId` tidak ada di jadwal milik pengguna (`SCHEDULE_NOT_FOUND`)'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    TooManyRequests:
+      description: 'Terlalu banyak percobaan (`TOO_MANY_REQUESTS`). Coba lagi sebentar.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+    # ------------------------------------------------ shared
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              description: Kode error UPPER_SNAKE_CASE, stabil untuk logika mobile.
+              examples: [VALIDATION_FAILED]
+            message:
+              type: string
+              description: Pesan berbahasa Indonesia untuk pengguna.
+              examples: [Nominal harus angka rupiah lebih dari 0]
+            details:
+              type: object
+              description: Opsional, hanya pada VALIDATION_FAILED. Kunci = nama field, nilai = pesan.
+              additionalProperties:
+                type: string
+    Uuid:
+      type: string
+      format: uuid
+    Rupiah:
+      type: integer
+      minimum: 0
+      description: Nominal rupiah utuh.
+    PositiveRupiah:
+      type: integer
+      minimum: 1
+      maximum: 100000000
+      description: Nominal rupiah 1 sampai 100.000.000.
+    Month:
+      type: string
+      pattern: '^[0-9]{4}-(0[1-9]|1[0-2])$'
+      examples: ['2026-11']
+    Time:
+      type: string
+      pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+      description: Jam WIB format HH:mm.
+      examples: ['08:00']
+    DayOfWeek:
+      type: integer
+      minimum: 1
+      maximum: 7
+      description: Hari ISO, 1 = Senin sampai 7 = Minggu.
+
+    # ------------------------------------------------ auth & profile
+    RegisterRequest:
+      type: object
+      required: [email, password, name]
+      additionalProperties: false
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+          description: Disimpan dalam huruf kecil.
+        password:
+          type: string
+          minLength: 8
+          maxLength: 72
+        name:
+          type: string
+          minLength: 2
+          maxLength: 50
+          description: Spasi di awal/akhir dibuang sebelum dicek panjangnya.
+    LoginRequest:
+      type: object
+      required: [email, password]
+      additionalProperties: false
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 1
+    RefreshRequest:
+      type: object
+      required: [refreshToken]
+      additionalProperties: false
+      properties:
+        refreshToken:
+          type: string
+    AuthTokens:
+      type: object
+      required: [accessToken, refreshToken, accessTokenExpiresAt]
+      properties:
+        accessToken:
+          type: string
+          description: JWT, berlaku 15 menit.
+        refreshToken:
+          type: string
+          description: Token buram, berlaku 30 hari, sekali pakai.
+        accessTokenExpiresAt:
+          type: string
+          format: date-time
+    AuthSession:
+      type: object
+      required: [user, tokens]
+      properties:
+        user:
+          $ref: '#/components/schemas/User'
+        tokens:
+          $ref: '#/components/schemas/AuthTokens'
+    User:
+      type: object
+      required: [id, email, name, campus, createdAt]
+      description: Kata sandi tidak pernah dikirim.
+      properties:
+        id:
+          $ref: '#/components/schemas/Uuid'
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+        campus:
+          type: [string, 'null']
+        createdAt:
+          type: string
+          format: date-time
+    UpdateProfileRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 50
+        campus:
+          type: [string, 'null']
+          maxLength: 80
+          description: '`null` atau string kosong menghapus kampus.'
+
+    # ------------------------------------------------ home
+    HomeSummary:
+      type: object
+      required: [date, budget, split, classesToday, upcomingTasks]
+      properties:
+        date:
+          type: string
+          format: date
+          description: Hari ini (WIB).
+        budget:
+          description: '`null` jika belum ada anggaran bulan ini (tampilkan ajakan "Atur anggaran bulan ini").'
+          oneOf:
+            - $ref: '#/components/schemas/BudgetStatus'
+            - type: 'null'
+        split:
+          $ref: '#/components/schemas/SplitTotals'
+        classesToday:
+          type: array
+          description: Kelas hari ini (WIB), urut jam mulai. Kosong = tampilkan ajakan.
+          items:
+            $ref: '#/components/schemas/ClassSchedule'
+        upcomingTasks:
+          type: array
+          maxItems: 3
+          description: Maksimal 3 tugas `belum`, urut deadline terdekat (yang terlambat ikut, paling atas).
+          items:
+            $ref: '#/components/schemas/StudyTask'
+    SplitTotals:
+      type: object
+      required: [hasGroups, totalIOwe, totalOwedToMe]
+      properties:
+        hasGroups:
+          type: boolean
+          description: '`false` = belum ikut grup; tampilkan ajakan buat/gabung grup.'
+        totalIOwe:
+          $ref: '#/components/schemas/Rupiah'
+        totalOwedToMe:
+          $ref: '#/components/schemas/Rupiah'
+
+    # ------------------------------------------------ wallet
+    TransactionType:
+      type: string
+      enum: [income, expense]
+    Category:
+      type: string
+      description: |
+        Kode kategori. Pengeluaran: food (Makan), transport (Transport), housing_bills (Kos & Tagihan),
+        study (Kuliah), leisure (Jajan & Hiburan), other_expense (Lainnya).
+        Pemasukan: allowance (Kiriman), side_job (Kerja Sampingan), scholarship (Beasiswa), other_income (Lainnya).
+      enum:
+        - food
+        - transport
+        - housing_bills
+        - study
+        - leisure
+        - other_expense
+        - allowance
+        - side_job
+        - scholarship
+        - other_income
+    CategoryInfo:
+      type: object
+      required: [code, type, label]
+      properties:
+        code:
+          $ref: '#/components/schemas/Category'
+        type:
+          $ref: '#/components/schemas/TransactionType'
+        label:
+          type: string
+          examples: [Makan]
+    Transaction:
+      type: object
+      required: [id, type, amount, category, date, note, createdAt, updatedAt]
+      properties:
+        id:
+          $ref: '#/components/schemas/Uuid'
+        type:
+          $ref: '#/components/schemas/TransactionType'
+        amount:
+          $ref: '#/components/schemas/PositiveRupiah'
+        category:
+          $ref: '#/components/schemas/Category'
+        date:
+          type: string
+          format: date
+          description: Tanggal transaksi (WIB).
+        note:
+          type: [string, 'null']
+          maxLength: 100
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    TransactionInput:
+      type: object
+      required: [type, amount, category, date]
+      additionalProperties: false
+      properties:
+        type:
+          $ref: '#/components/schemas/TransactionType'
+        amount:
+          $ref: '#/components/schemas/PositiveRupiah'
+        category:
+          $ref: '#/components/schemas/Category'
+        date:
+          type: string
+          format: date
+          description: Tidak boleh setelah hari ini (WIB).
+        note:
+          type: [string, 'null']
+          maxLength: 100
+    TransactionPatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      description: Field yang dikirim saja yang diubah. Hasil akhirnya divalidasi seperti TransactionInput.
+      properties:
+        type:
+          $ref: '#/components/schemas/TransactionType'
+        amount:
+          $ref: '#/components/schemas/PositiveRupiah'
+        category:
+          $ref: '#/components/schemas/Category'
+        date:
+          type: string
+          format: date
+        note:
+          type: [string, 'null']
+          maxLength: 100
+    TransactionPage:
+      type: object
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Transaction'
+        nextCursor:
+          type: [string, 'null']
+    CategoryTotal:
+      type: object
+      required: [category, label, amount, percent]
+      properties:
+        category:
+          $ref: '#/components/schemas/Category'
+        label:
+          type: string
+        amount:
+          $ref: '#/components/schemas/PositiveRupiah'
+        percent:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: Persen dari total pengeluaran, dibulatkan ke bilangan bulat terdekat (Math.round).
+    MonthSummary:
+      type: object
+      required: [month, totalIncome, totalExpense, expenseByCategory]
+      properties:
+        month:
+          $ref: '#/components/schemas/Month'
+        totalIncome:
+          $ref: '#/components/schemas/Rupiah'
+        totalExpense:
+          $ref: '#/components/schemas/Rupiah'
+        expenseByCategory:
+          type: array
+          description: Hanya kategori pengeluaran dengan nominal > 0, urut nominal terbesar. Kosong = "Belum ada pengeluaran bulan ini".
+          items:
+            $ref: '#/components/schemas/CategoryTotal'
+    BudgetInput:
+      type: object
+      required: [amount]
+      additionalProperties: false
+      properties:
+        amount:
+          $ref: '#/components/schemas/PositiveRupiah'
+    BudgetStatus:
+      type: object
+      required: [month, amount, totalExpense, remainingBudget, overBudgetAmount, today]
+      properties:
+        month:
+          $ref: '#/components/schemas/Month'
+        amount:
+          $ref: '#/components/schemas/PositiveRupiah'
+        totalExpense:
+          $ref: '#/components/schemas/Rupiah'
+        remainingBudget:
+          description: max(0, amount - totalExpense).
+          $ref: '#/components/schemas/Rupiah'
+        overBudgetAmount:
+          description: max(0, totalExpense - amount). > 0 berarti tampilkan "Anggaran terlampaui Rp…".
+          $ref: '#/components/schemas/Rupiah'
+        today:
+          description: Hanya untuk bulan berjalan; selain itu `null`.
+          oneOf:
+            - $ref: '#/components/schemas/DailyAllowance'
+            - type: 'null'
+    DailyAllowance:
+      type: object
+      description: |
+        Dihitung backend dengan zona Asia/Jakarta:
+        dailyAllowance = max(0, floor((amount - spentBeforeToday) / daysLeftIncludingToday))
+        remainingToday = max(0, dailyAllowance - spentToday)
+        overTodayAmount = max(0, spentToday - dailyAllowance)
+        Contoh: anggaran 1.500.000, 21 November (sisa 10 hari), spentBeforeToday 1.000.000
+        maka dailyAllowance 50.000; spentToday 20.000 maka remainingToday 30.000.
+      required: [date, daysLeftIncludingToday, spentBeforeToday, spentToday, dailyAllowance, remainingToday, overTodayAmount]
+      properties:
+        date:
+          type: string
+          format: date
+        daysLeftIncludingToday:
+          type: integer
+          minimum: 1
+          maximum: 31
+        spentBeforeToday:
+          $ref: '#/components/schemas/Rupiah'
+        spentToday:
+          $ref: '#/components/schemas/Rupiah'
+        dailyAllowance:
+          $ref: '#/components/schemas/Rupiah'
+        remainingToday:
+          $ref: '#/components/schemas/Rupiah'
+        overTodayAmount:
+          $ref: '#/components/schemas/Rupiah'
+
+    # ------------------------------------------------ split-bill
+    MemberRef:
+      type: object
+      required: [userId, name]
+      properties:
+        userId:
+          $ref: '#/components/schemas/Uuid'
+        name:
+          type: string
+    GroupMember:
+      type: object
+      required: [userId, name, campus, joinedAt]
+      properties:
+        userId:
+          $ref: '#/components/schemas/Uuid'
+        name:
+          type: string
+        campus:
+          type: [string, 'null']
+        joinedAt:
+          type: string
+          format: date-time
+    InviteCode:
+      type: string
+      pattern: '^[A-HJ-NP-Z2-9]{6}$'
+      description: 6 karakter huruf besar dan angka tanpa O, 0, I, 1. Input dari mobile boleh huruf kecil; backend menyamakan ke huruf besar.
+      examples: [K7QX2M]
+    GroupSummary:
+      type: object
+      required: [id, name, memberCount, myNetBalance]
+      properties:
+        id:
+          $ref: '#/components/schemas/Uuid'
+        name:
+          type: string
+        memberCount:
+          type: integer
+          minimum: 1
+          maximum: 20
+        myNetBalance:
+          type: integer
+          description: Positif = orang lain utang ke saya; negatif = saya utang. Satuan rupiah.
+    GroupDetail:
+      type: object
+      required: [id, name, inviteCode, members, createdAt]
+      properties:
+        id:
+          $ref: '#/components/schemas/Uuid'
+        name:
+          type: string
+        inviteCode:
+          $ref: '#/components/schemas/InviteCode'
+        members:
+          type: array
+          description: Urut `joinedAt` menaik (urutan ini dipakai pembagian sisa bagi rata).
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/GroupMember'
+        createdAt:
+          type: string
+          format: date-time
+    CreateGroupRequest:
+      type: object
+      required: [name]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 3
+          maxLength: 40
+    JoinGroupRequest:
+      type: object
+      required: [inviteCode]
+      additionalProperties: false
+      properties:
+        inviteCode:
+          type: string
+          minLength: 6
+          maxLength: 6
+    BalanceEntry:
+      type: object
+      required: [from, to, amount]
+      description: '`from` berutang `amount` ke `to` (sudah netto antar pasangan).'
+      properties:
+        from:
+          $ref: '#/components/schemas/MemberRef'
+        to:
+          $ref: '#/components/schemas/MemberRef'
+        amount:
+          $ref: '#/components/schemas/PositiveRupiah'
+    GroupBalances:
+      type: object
+      required: [groupId, entries, totalIOwe, totalOwedToMe, allSettled]
+      description: Dihitung dari bagian berstatus `belum_bayar` dan `menunggu_konfirmasi`. Bagian peserta X di tagihan yang dibayar Y = X utang ke Y. Dua arah antar pasangan dinettokan.
+      properties:
+        groupId:
+          $ref: '#/components/schemas/Uuid'
+        entries:
+          type: array
+          description: Semua pasangan dengan saldo > 0 di grup.
+          items:
+            $ref: '#/components/schemas/BalanceEntry'
+        totalIOwe:
+          $ref: '#/components/schemas/Rupiah'
+        totalOwedToMe:
+          $ref: '#/components/schemas/Rupiah'
+        allSettled:
+          type: boolean
+          description: '`true` = tampilkan "Semua patungan beres".'
+    SplitMethod:
+      type: string
+      enum: [equal, manual]
+    ShareStatus:
+      type: string
+      enum: [belum_bayar, menunggu_konfirmasi, lunas]
+    BillStatus:
+      type: string
+      enum: [open, settled]
+      description: '`settled` (tampil "Selesai") otomatis saat semua bagian `lunas`.'
+    ShareInput:
+      type: object
+      required: [userId, amount]
+      additionalProperties: false
+      properties:
+        userId:
+          $ref: '#/components/schemas/Uuid'
+        amount:
+          $ref: '#/components/schemas/Rupiah'
+    CreateBillRequest:
+      type: object
+      required: [title, totalAmount, splitMethod]
+      additionalProperties: false
+      description: |
+        - `payerId` bawaan = pengguna yang membuat.
+        - Bagi rata: `participantIds` bawaan = semua anggota. bagian = floor(total / n); sisa (total mod n)
+          ditambah Rp1 masing-masing ke peserta paling awal bergabung ke grup. Contoh 100.000 / 3 = 33.334, 33.333, 33.333.
+        - Manual: `shares` wajib, peserta = daftar userId di `shares`, jumlah amount harus sama dengan `totalAmount`.
+          `participantIds` diabaikan.
+      properties:
+        title:
+          type: string
+          minLength: 3
+          maxLength: 60
+        totalAmount:
+          $ref: '#/components/schemas/PositiveRupiah'
+        payerId:
+          $ref: '#/components/schemas/Uuid'
+        splitMethod:
+          $ref: '#/components/schemas/SplitMethod'
+        participantIds:
+          type: array
+          uniqueItems: true
+          minItems: 2
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/Uuid'
+        shares:
+          type: array
+          minItems: 2
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/ShareInput'
+    BillShare:
+      type: object
+      required: [id, user, amount, status, updatedAt]
+      properties:
+        id:
+          $ref: '#/components/schemas/Uuid'
+        user:
+          $ref: '#/components/schemas/MemberRef'
+        amount:
+          $ref: '#/components/schemas/Rupiah'
+        status:
+          $ref: '#/components/schemas/ShareStatus'
+        updatedAt:
+          type: string
+          format: date-time
+    Bill:
+      type: object
+      required: [id, groupId, title, totalAmount, splitMethod, payer, createdBy, status, shares, canDelete, createdAt]
+      properties:
+        id:
+          $ref: '#/components/schemas/Uuid'
+        groupId:
+          $ref: '#/components/schemas/Uuid'
+        title:
+          type: string
+        totalAmount:
+          $ref: '#/components/schemas/PositiveRupiah'
+        splitMethod:
+          $ref: '#/components/schemas/SplitMethod'
+        payer:
+          $ref: '#/components/schemas/MemberRef'
+        createdBy:
+          $ref: '#/components/schemas/MemberRef'
+        status:
+          $ref: '#/components/schemas/BillStatus'
+        shares:
+          type: array
+          description: Urut `joinedAt` peserta di grup, menaik.
+          items:
+            $ref: '#/components/schemas/BillShare'
+        canDelete:
+          type: boolean
+          description: '`true` jika pengguna saat ini pembuat dan belum ada bagian orang lain yang `lunas`.'
+        createdAt:
+          type: string
+          format: date-time
+    BillPage:
+      type: object
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Bill'
+        nextCursor:
+          type: [string, 'null']
+
+    # ------------------------------------------------ study
+    ScheduleConflict:
+      type: object
+      required: [id, courseName, startTime, endTime]
+      properties:
+        id:
+          $ref: '#/components/schemas/Uuid'
+        courseName:
+          type: string
+        startTime:
+          $ref: '#/components/schemas/Time'
+        endTime:
+          $ref: '#/components/schemas/Time'
+    ClassSchedule:
+      type: object
+      required: [id, courseName, dayOfWeek, startTime, endTime, room, conflictsWith]
+      properties:
+        id:
+          $ref: '#/components/schemas/Uuid'
+        courseName:
+          type: string
+        dayOfWeek:
+          $ref: '#/components/schemas/DayOfWeek'
+        startTime:
+          $ref: '#/components/schemas/Time'
+        endTime:
+          $ref: '#/components/schemas/Time'
+        room:
+          type: [string, 'null']
+        conflictsWith:
+          type: array
+          description: Jadwal lain di hari sama yang jamnya beririsan (start < other.end dan other.start < end). Tidak kosong = tampilkan "Bentrok dengan …".
+          items:
+            $ref: '#/components/schemas/ScheduleConflict'
+    ScheduleInput:
+      type: object
+      required: [courseName, dayOfWeek, startTime, endTime]
+      additionalProperties: false
+      properties:
+        courseName:
+          type: string
+          minLength: 2
+          maxLength: 60
+        dayOfWeek:
+          $ref: '#/components/schemas/DayOfWeek'
+        startTime:
+          $ref: '#/components/schemas/Time'
+        endTime:
+          $ref: '#/components/schemas/Time'
+        room:
+          type: [string, 'null']
+          maxLength: 30
+    SchedulePatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      description: Field yang dikirim saja yang diubah. Hasil akhirnya divalidasi seperti ScheduleInput.
+      properties:
+        courseName:
+          type: string
+          minLength: 2
+          maxLength: 60
+        dayOfWeek:
+          $ref: '#/components/schemas/DayOfWeek'
+        startTime:
+          $ref: '#/components/schemas/Time'
+        endTime:
+          $ref: '#/components/schemas/Time'
+        room:
+          type: [string, 'null']
+          maxLength: 30
+    TaskStatus:
+      type: string
+      enum: [belum, selesai]
+    DeadlineLabel:
+      type: string
+      enum: [overdue, due_soon]
+      description: |
+        Dihitung backend saat request, hanya untuk tugas `belum`:
+        - overdue: deadline < sekarang (tampil merah "Terlambat").
+        - due_soon: sekarang <= deadline <= sekarang + 24 jam (tampil "Hari ini" atau "Besok" sesuai tanggal WIB deadline).
+    StudyTask:
+      type: object
+      required: [id, title, scheduleId, courseName, deadline, note, status, completedAt, deadlineLabel, createdAt]
+      properties:
+        id:
+          $ref: '#/components/schemas/Uuid'
+        title:
+          type: string
+        scheduleId:
+          type: [string, 'null']
+          format: uuid
+        courseName:
+          type: [string, 'null']
+          description: Nama mata kuliah dari jadwal tertaut, `null` jika tidak tertaut.
+        deadline:
+          type: string
+          format: date-time
+        note:
+          type: [string, 'null']
+          maxLength: 300
+        status:
+          $ref: '#/components/schemas/TaskStatus'
+        completedAt:
+          type: [string, 'null']
+          format: date-time
+        deadlineLabel:
+          oneOf:
+            - $ref: '#/components/schemas/DeadlineLabel'
+            - type: 'null'
+        createdAt:
+          type: string
+          format: date-time
+    TaskInput:
+      type: object
+      required: [title, deadline]
+      additionalProperties: false
+      properties:
+        title:
+          type: string
+          minLength: 3
+          maxLength: 80
+        scheduleId:
+          type: [string, 'null']
+          format: uuid
+        deadline:
+          type: string
+          format: date-time
+          description: Boleh di masa lalu.
+        note:
+          type: [string, 'null']
+          maxLength: 300
+    TaskPatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        title:
+          type: string
+          minLength: 3
+          maxLength: 80
+        scheduleId:
+          type: [string, 'null']
+          format: uuid
+        deadline:
+          type: string
+          format: date-time
+        note:
+          type: [string, 'null']
+          maxLength: 300
+        status:
+          $ref: '#/components/schemas/TaskStatus'
+    TaskPage:
+      type: object
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/StudyTask'
+        nextCursor:
+          type: [string, 'null']
