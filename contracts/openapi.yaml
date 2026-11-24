@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: KosKita API
-  version: 1.0.0
+  version: 1.1.0
   description: |
     Kontrak API KosKita, satu-satunya acuan untuk apps/mobile dan apps/backend.
 
@@ -548,7 +548,10 @@ paths:
     post:
       tags: [split-bill]
       operationId: leaveGroup
-      summary: Keluar grup, hanya jika saldo saya di grup ini Rp0 (PTG-01)
+      summary: Keluar grup, hanya jika saya tidak punya utang/piutang di grup ini (PTG-01)
+      description: |
+        Boleh keluar hanya jika tidak ada BalanceEntry (lihat `getGroupBalances`) dengan `from` atau `to` = saya.
+        Netto gabungan 0 tidak cukup: A utang ke B Rp10.000 dan C utang ke A Rp10.000 berarti A belum boleh keluar.
       responses:
         '204':
           description: Sudah keluar
@@ -559,7 +562,7 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          description: 'Masih ada utang/piutang di grup ini (`BALANCE_NOT_SETTLED`, pesan "Selesaikan dulu patunganmu")'
+          description: 'Masih ada BalanceEntry dengan `from` atau `to` = saya (`BALANCE_NOT_SETTLED`, pesan "Selesaikan dulu patunganmu")'
           content:
             application/json:
               schema:
@@ -677,7 +680,12 @@ paths:
     delete:
       tags: [split-bill]
       operationId: deleteBill
-      summary: Hapus tagihan. Hanya pembuat, dan hanya jika belum ada bagian orang lain yang lunas (PTG-02)
+      summary: Hapus tagihan. Hanya pembuat, dan hanya jika belum ada bagian non-pembayar yang lunas (PTG-02)
+      description: |
+        Yang dicek hanya bagian milik peserta selain pembayar (`payer`). Bagian pembayar selalu `lunas` sejak dibuat
+        dan tidak dihitung, baik pembayar itu pembuat atau bukan. Jadi tagihan yang `payerId`-nya orang lain tetap
+        bisa dihapus pembuatnya selama bagian peserta lain belum ada yang `lunas`. Status `menunggu_konfirmasi`
+        tidak menghalangi penghapusan.
       responses:
         '204':
           description: Terhapus
@@ -692,7 +700,7 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          description: 'Sudah ada bagian peserta lain yang lunas (`BILL_HAS_PAYMENTS`)'
+          description: 'Sudah ada bagian milik peserta selain pembayar yang `lunas` (`BILL_HAS_PAYMENTS`)'
           content:
             application/json:
               schema:
@@ -1079,7 +1087,7 @@ components:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
     NotFound:
-      description: 'Data tidak ada atau bukan milik pengguna (`NOT_FOUND`). Data milik orang lain selalu 404, bukan 403, supaya keberadaannya tidak bocor.'
+      description: 'Data tidak ada atau bukan milik pengguna (`NOT_FOUND`). Data pribadi milik orang lain (transaksi, anggaran, jadwal, tugas) selalu 404, bukan 403, supaya keberadaannya tidak bocor. Pengecualian: grup dan tagihan yang ada tapi saya bukan anggotanya dibalas 403 `NOT_GROUP_MEMBER`.'
       content:
         application/json:
           schema:
@@ -1155,7 +1163,11 @@ components:
       type: integer
       minimum: 1
       maximum: 100000000
-      description: Nominal rupiah 1 sampai 100.000.000.
+      description: Nominal rupiah 1 sampai 100.000.000. Hanya untuk satu nilai yang diinput pengguna, bukan hasil jumlah.
+    RupiahTotal:
+      type: integer
+      minimum: 1
+      description: Hasil jumlah beberapa nominal rupiah (agregat), tanpa batas atas.
     Month:
       type: string
       pattern: '^[0-9]{4}-(0[1-9]|1[0-2])$'
@@ -1297,8 +1309,10 @@ components:
           description: '`false` = belum ikut grup; tampilkan ajakan buat/gabung grup.'
         totalIOwe:
           $ref: '#/components/schemas/Rupiah'
+          description: Jumlah `GroupBalances.totalIOwe` saya di semua grup yang saya ikuti. Tidak dinettokan dengan totalOwedToMe.
         totalOwedToMe:
           $ref: '#/components/schemas/Rupiah'
+          description: Jumlah `GroupBalances.totalOwedToMe` saya di semua grup yang saya ikuti. Tidak dinettokan dengan totalIOwe.
 
     # ------------------------------------------------ wallet
     TransactionType:
@@ -1412,7 +1426,7 @@ components:
         label:
           type: string
         amount:
-          $ref: '#/components/schemas/PositiveRupiah'
+          $ref: '#/components/schemas/RupiahTotal'
         percent:
           type: integer
           minimum: 0
@@ -1519,7 +1533,7 @@ components:
       examples: [K7QX2M]
     GroupSummary:
       type: object
-      required: [id, name, memberCount, myNetBalance]
+      required: [id, name, memberCount, myNetBalance, isSettledForMe]
       properties:
         id:
           $ref: '#/components/schemas/Uuid'
@@ -1531,7 +1545,13 @@ components:
           maximum: 20
         myNetBalance:
           type: integer
-          description: Positif = orang lain utang ke saya; negatif = saya utang. Satuan rupiah.
+          description: |
+            totalOwedToMe - totalIOwe saya di grup ini (lihat GroupBalances), satuan rupiah. Positif = netto orang lain
+            utang ke saya; negatif = netto saya utang. Hanya untuk tampilan: nilai 0 TIDAK berarti boleh keluar,
+            pakai `isSettledForMe`.
+        isSettledForMe:
+          type: boolean
+          description: '`true` jika tidak ada BalanceEntry dengan `from` atau `to` = saya di grup ini (sama dengan `GroupBalances.canLeave`).'
     GroupDetail:
       type: object
       required: [id, name, inviteCode, members, createdAt]
@@ -1579,26 +1599,36 @@ components:
         to:
           $ref: '#/components/schemas/MemberRef'
         amount:
-          $ref: '#/components/schemas/PositiveRupiah'
+          $ref: '#/components/schemas/RupiahTotal'
     GroupBalances:
       type: object
-      required: [groupId, entries, totalIOwe, totalOwedToMe, allSettled]
-      description: Dihitung dari bagian berstatus `belum_bayar` dan `menunggu_konfirmasi`. Bagian peserta X di tagihan yang dibayar Y = X utang ke Y. Dua arah antar pasangan dinettokan.
+      required: [groupId, entries, totalIOwe, totalOwedToMe, canLeave, allSettled]
+      description: |
+        Dihitung dari bagian berstatus `belum_bayar` dan `menunggu_konfirmasi`. Bagian peserta X di tagihan
+        yang dibayar Y = X utang ke Y. Netto hanya antar pasangan yang sama di grup yang sama (A ke B dikurangi
+        B ke A); tidak ada netto lintas pasangan atau lintas grup.
+        Contoh: A utang ke B Rp10.000 dan C utang ke A Rp10.000 menghasilkan dua entri;
+        untuk A: totalIOwe 10.000, totalOwedToMe 10.000, canLeave false.
       properties:
         groupId:
           $ref: '#/components/schemas/Uuid'
         entries:
           type: array
-          description: Semua pasangan dengan saldo > 0 di grup.
+          description: Semua pasangan dengan saldo netto > 0 di grup (termasuk yang tidak melibatkan saya).
           items:
             $ref: '#/components/schemas/BalanceEntry'
         totalIOwe:
           $ref: '#/components/schemas/Rupiah'
+          description: Jumlah `amount` entri dengan `from` = saya.
         totalOwedToMe:
           $ref: '#/components/schemas/Rupiah'
+          description: Jumlah `amount` entri dengan `to` = saya.
+        canLeave:
+          type: boolean
+          description: '`true` jika tidak ada entri dengan `from` atau `to` = saya. Aturan yang sama dipakai `leaveGroup`.'
         allSettled:
           type: boolean
-          description: '`true` = tampilkan "Semua patungan beres".'
+          description: '`true` jika `entries` kosong (seluruh grup beres); tampilkan "Semua patungan beres".'
     SplitMethod:
       type: string
       enum: [equal, manual]
@@ -1694,7 +1724,7 @@ components:
             $ref: '#/components/schemas/BillShare'
         canDelete:
           type: boolean
-          description: '`true` jika pengguna saat ini pembuat dan belum ada bagian orang lain yang `lunas`.'
+          description: '`true` jika pengguna saat ini pembuat (`createdBy`) dan tidak ada bagian milik peserta selain `payer` yang berstatus `lunas`. Bagian milik pembayar tidak dihitung.'
         createdAt:
           type: string
           format: date-time
