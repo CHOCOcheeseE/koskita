@@ -1,0 +1,14 @@
+node_modules/
+dist/
+build/
+.expo/
+.env
+.env.*
+!.env.example
+*.log
+coverage/
+.DS_Store
+
+# catatan kerja lokal tim (tidak ikut ke repo)
+CLAUDE.md
+.claude/
